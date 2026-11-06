@@ -1,0 +1,172 @@
+name: Build OrangeFox Recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      MANIFEST_BRANCH:
+        description: 'OrangeFox Branch (Pick the Numbers Only: 12.1 / 11.0)'
+        required: true
+        default: '12.1'
+        type: choice
+        options:
+          - '12.1'
+          - '11.0'
+          - '9.0'
+      DEVICE_TREE_URL:
+        description: 'Device Tree Repository URL (provenance only — bootstrap build unpacks tree.zip instead of cloning)'
+        required: true
+        default: 'https://github.com/HIZVOICE/fox-twrp-device-camellia'
+      DEVICE_TREE_BRANCH:
+        description: 'Device Tree Branch'
+        required: true
+        default: 'fox_12.1'
+      DEVICE_PATH:
+        description: 'Device Tree Path'
+        required: true
+        default: 'device/xiaomi/camellia'
+      DEVICE_NAME:
+        description: 'Device Codename'
+        required: true
+        default: 'camellia'
+      MAKEFILE_NAME:
+        description: 'Makefile Prefix (twrp / omni)'
+        required: true
+        default: 'twrp'
+        type: choice
+        options:
+          - twrp
+          - omni
+      BUILD_TARGET:
+        description: 'Build Target'
+        required: true
+        default: 'bootimage'
+        type: choice
+        options:
+          - recoveryimage
+          - bootimage
+          - vendor_bootimage
+
+jobs:
+  build:
+    name: Build OFOX by ${{ github.actor }}
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+    - name: Check Out Repository (bootstrap — provides tree.zip)
+      uses: actions/checkout@v4
+
+    - name: Free Disk Space (Ubuntu)
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: false
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: true
+        docker-images: true
+        swap-storage: true
+
+    - name: Update & Install Dependencies
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        echo "https://archive.ubuntu.com/ubuntu/" | sudo tee /etc/apt/apt-mirrors.txt
+        sudo apt-get update -q -y
+        sudo apt-get install -q -y tzdata
+        sudo apt-get install -q -y --no-install-recommends git-core gnupg flex bison build-essential zip curl zlib1g-dev gcc-multilib g++-multilib libc6-dev-i386 lib32ncurses5-dev x11proto-core-dev libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig rsync python2 python3 python-is-python3
+
+    - name: Install Repo Tool
+      run: |
+        mkdir -p ~/bin
+        curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+        chmod a+x ~/bin/repo
+        sudo ln -sf ~/bin/repo /usr/bin/repo
+
+    - name: Set-up Manifest & Sync
+      run: |
+        mkdir -p ${{ github.workspace }}/OrangeFox
+        git config --global user.name "Runner"
+        git config --global user.email "runner@github.actions"
+        git clone -q https://gitlab.com/OrangeFox/sync.git
+        cd sync
+
+        # Synchronization execution
+        ./orangefox_sync.sh --branch ${{ github.event.inputs.MANIFEST_BRANCH }} --path ${{ github.workspace }}/OrangeFox
+
+    - name: Unpack Device Tree (bootstrap zip)
+      run: |
+        # Bootstrap layout: the device tree ships as tree.zip at this repo's
+        # root (checked out into $GITHUB_WORKSPACE above). Unpack it into the
+        # device path inside the synced OrangeFox source, in place of the
+        # upstream workflow's git clone of DEVICE_TREE_URL.
+        mkdir -p ${{ github.workspace }}/OrangeFox/${{ github.event.inputs.DEVICE_PATH }}
+        unzip -q ${{ github.workspace }}/tree.zip -d ${{ github.workspace }}/OrangeFox/${{ github.event.inputs.DEVICE_PATH }}
+        ls ${{ github.workspace }}/OrangeFox/${{ github.event.inputs.DEVICE_PATH }}
+
+    - name: Build OrangeFox
+      run: |
+        cd ${{ github.workspace }}/OrangeFox
+
+        # Temporarily turn off strict mode so minor errors in vendorsetup.sh are ignored
+        set +e
+
+        # Initialize environment & lunch
+        source build/envsetup.sh
+        export ALLOW_MISSING_DEPENDENCIES=true
+        export LC_ALL="C"
+        lunch ${{ github.event.inputs.MAKEFILE_NAME }}_${{ github.event.inputs.DEVICE_NAME }}-eng
+
+        # Turn strict mode back on
+        set -e
+
+        # Start compiling
+        mka adbd ${{ github.event.inputs.BUILD_TARGET }}
+
+    - name: Prepare Release Assets
+      run: |
+        cd ${{ github.workspace }}/OrangeFox/out/target/product/${{ github.event.inputs.DEVICE_NAME }}
+        mkdir -p ${{ github.workspace }}/release-assets
+
+        echo "Organizing build artifacts for release..."
+
+        # 1. Main OrangeFox Flashable ZIP
+        OFOX_ZIP=$(ls OrangeFox-*.zip 2>/dev/null | head -n 1)
+        if [ -n "$OFOX_ZIP" ]; then
+          cp "$OFOX_ZIP" ${{ github.workspace }}/release-assets/OrangeFox-${{ github.event.inputs.DEVICE_NAME }}.zip
+          echo "Found and prepared ZIP: $OFOX_ZIP"
+        fi
+
+        # 2. Standalone Recovery Image
+        OFOX_IMG=$(ls OrangeFox-*.img 2>/dev/null | head -n 1)
+        if [ -n "$OFOX_IMG" ]; then
+          cp "$OFOX_IMG" ${{ github.workspace }}/release-assets/recovery.img
+          echo "Found and prepared IMG: $OFOX_IMG -> recovery.img"
+        elif [ -f "boot.img" ]; then
+          # Fallback for A/B devices building bootimage
+          cp boot.img ${{ github.workspace }}/release-assets/recovery.img
+          echo "Prepared raw boot.img -> recovery.img"
+        fi
+
+    - name: Generate Release Tag
+      id: tag
+      run: echo "release_tag=$(date +'%Y%m%d_%H%M')" >> $GITHUB_OUTPUT
+
+    - name: Publish to GitHub Releases
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: OFOX-${{ github.event.inputs.DEVICE_NAME }}-${{ steps.tag.outputs.release_tag }}
+        name: OrangeFox Recovery - ${{ github.event.inputs.DEVICE_NAME }}
+        files: |
+          ${{ github.workspace }}/release-assets/*
+        draft: false
+        prerelease: false
+
+    - name: Upload Build Artifacts (Fallback)
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: OFOX-Artifacts-${{ github.event.inputs.DEVICE_NAME }}
+        path: ${{ github.workspace }}/release-assets/*
+        retention-days: 30
