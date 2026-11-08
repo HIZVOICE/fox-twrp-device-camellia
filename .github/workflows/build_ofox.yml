@@ -115,7 +115,11 @@ jobs:
         source build/envsetup.sh
         export ALLOW_MISSING_DEPENDENCIES=true
         export LC_ALL="C"
-        lunch ${{ github.event.inputs.MAKEFILE_NAME }}_${{ github.event.inputs.DEVICE_NAME }}-bp2a-eng
+        if [ "${{ github.event.inputs.MANIFEST_BRANCH }}" = "12.1" ]; then
+          lunch ${{ github.event.inputs.MAKEFILE_NAME }}_${{ github.event.inputs.DEVICE_NAME }}-eng
+        else
+          lunch ${{ github.event.inputs.MAKEFILE_NAME }}_${{ github.event.inputs.DEVICE_NAME }}-bp2a-eng
+        fi
 
         # Turn strict mode back on
         set -e
