@@ -1,18 +1,15 @@
-name: Rename tree zip
+name: Verify tree zip
 on:
   workflow_dispatch:
-permissions:
-  contents: write
 jobs:
-  rename:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Replace tree.zip with the 12.1 tree
+      - name: Check BoardConfig SELinux setting inside tree.zip
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git rm tree.zip
-          git mv tree-12-selinux.zip tree.zip
-          git commit -m "OrangeFox 12.1 tree: SELinux enforcing + maintainer HIZVOICE, patch 2"
-          git push
+          ls -l tree.zip
+          echo "--- BoardConfig.mk entries in tree.zip ---"
+          unzip -l tree.zip | grep -i "BoardConfig.mk" || echo "(no BoardConfig.mk entry found)"
+          echo "--- selinux lines in BoardConfig.mk ---"
+          for f in $(unzip -l tree.zip | grep -oE '[^ ]*BoardConfig\.mk'); do echo "== $f =="; unzip -p tree.zip "$f" | grep -i selinux || echo "(no selinux line in $f)"; done
