@@ -4,14 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       MANIFEST_BRANCH:
-        description: 'OrangeFox Branch (Pick the Numbers Only: 12.1 / 11.0)'
+        description: 'OrangeFox Branch (Pick the Numbers Only: 16.0 / 12.1)'
         required: true
-        default: '12.1'
+        default: '16.0'
         type: choice
         options:
+          - '16.0'
           - '12.1'
-          - '11.0'
-          - '9.0'
       DEVICE_TREE_URL:
         description: 'Device Tree Repository URL (provenance only — bootstrap build unpacks tree.zip instead of cloning)'
         required: true
@@ -19,7 +18,7 @@ on:
       DEVICE_TREE_BRANCH:
         description: 'Device Tree Branch'
         required: true
-        default: 'fox_12.1'
+        default: 'fox_16.0'
       DEVICE_PATH:
         description: 'Device Tree Path'
         required: true
@@ -116,7 +115,7 @@ jobs:
         source build/envsetup.sh
         export ALLOW_MISSING_DEPENDENCIES=true
         export LC_ALL="C"
-        lunch ${{ github.event.inputs.MAKEFILE_NAME }}_${{ github.event.inputs.DEVICE_NAME }}-eng
+        lunch ${{ github.event.inputs.MAKEFILE_NAME }}_${{ github.event.inputs.DEVICE_NAME }}-bp2a-eng
 
         # Turn strict mode back on
         set -e
